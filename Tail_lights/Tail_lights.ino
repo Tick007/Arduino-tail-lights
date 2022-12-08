@@ -17,7 +17,7 @@ String incoming; // for incoming serial data
 int timeout=20;
 bool isFlashing = false;/////////Мигает задний или нет
 int led_red_pin = 6;  ///////Внешний красный диод для фар rear lights
-int led_redbrake_pin = 5;//or 3; putt yours according to soldering//////Внешний красный диод для тормоза brake led
+int led_redbrake_pin = 5;//5 or 3; putt yours according to soldering//////Внешний красный диод для тормоза brake led
 int rear_white_pin = 9;  ///////Внешний белый диод для заднего хода /rear drive white led
 byte PWM_PIN = 10; /////////Throtle PWM read
 byte PWM_MODE_PIN = 18;//18 - leonardo/pro micro; 11-pro mini /////////Direction selection pwm read
@@ -29,6 +29,7 @@ int isReversed_EEPROM_CELL = 0;
 const int REAR_LIGHT_LEVEL = 30;
 const int REAR_BRAKE_LEVEL = 150;
 const int BRAKE_YARKOST_DEFAULT=10;///0-255
+const bool monitorModeport = false; ////////////monitor or not pwm mode port. If not - than direction will switch to opposite every power on
 
 #ifdef __SAM3X8E__
 #define SERIAL SerialUSB
@@ -42,7 +43,11 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   //pinMode(led_pin, OUTPUT);
  isReversed = EEPROM.read(isReversed_EEPROM_CELL);
-
+ if(monitorModeport==false) {
+  isReversed=!isReversed;
+  EEPROM.write(isReversed_EEPROM_CELL, isReversed);
+ }
+//SERIAL.begin(115200);
 
 
  xTaskCreate(
@@ -76,46 +81,6 @@ void loop() {
 }
 
 
-///////////////Читаем состояние на управляющем канале. Если идет чтение в отдельном таске, то периодически каждые 5 секунд летит помеха на другой вход (который читается в другом таске)
-void TaskPwmModeRead( void *pvParameters __attribute__((unused)) ){
-  int mode_value = 0;/////////////Текущее значение управляющего сигнала
-  int prev_mode_value = 0; ///////Предыдущее значение управляющего сигнала
-  int value_diff = 0;/////////////Разница значений управляющего сигнала
-  int deviance = 1000;
-  unsigned long time_read; ////////////Секунд от начала работы платы 
-  unsigned long time_prev;////////Предыдущее значение секунд от начала работы платы на каждом цикле опроса порта PWM сигнала
-  unsigned long swith_time;//Время когда было поменяно значение режима работы
-  unsigned long diff;
-  for (;;) // A Task shall never return or exit.
-      {
-
-
-        
-        time_read = millis();
-        mode_value = pulseIn(PWM_MODE_PIN, HIGH);
-        value_diff = abs (mode_value -prev_mode_value);
-        if(value_diff>deviance){
-          if((time_read-swith_time)>2000){
-              swith_time = time_read;////////////Время когда поменялось значение
-              isReversed = !isReversed;///////////////Отключил пока смену значения. Порт без подключенного приемника сильно щумит
-          
-              for (int k=0;k<(isReversed==true?2:3);k++){ //////////////////Мигаем для подтверждения
-                analogWrite(rear_white_pin, 200);
-                vTaskDelay(10);
-                analogWrite(rear_white_pin, 0);
-                vTaskDelay(10);
-              }
-          }
-                                          
-        }
-        vTaskDelay(50);
-        time_prev = time_read;
-        prev_mode_value = mode_value;
-      }
-
-
-}
-
 /////////////////////Основной цикл чтения канала газа
 void TaskPwmRead( void *pvParameters __attribute__((unused)) ){
 
@@ -140,25 +105,29 @@ void TaskPwmRead( void *pvParameters __attribute__((unused)) ){
   for (;;) // A Task shall never return or exit.
       {
 
-        /* Опрос порта управления */
-        time_read = millis();
-        mode_value = pulseIn(PWM_MODE_PIN, HIGH);
-        value_diff = abs (mode_value -prev_mode_value);
-        if(value_diff>deviance){
-          if((time_read-swith_time)>2000){
-            //SERIAL.println("qqq");
-              swith_time = time_read;////////////Время когда поменялось значение
-              isReversed = !isReversed;///////////////Отключил пока смену значения. Порт без подключенного приемника сильно щумит
-              EEPROM.write(isReversed_EEPROM_CELL, isReversed);
-              for (int k=0;k<(isReversed==true?2:3);k++){ //////////////////Мигаем для подтверждения
-                analogWrite(rear_white_pin, 125);
-                vTaskDelay(10);
-                analogWrite(rear_white_pin, 0);
-                vTaskDelay(10);
-              }
+        if(monitorModeport==true){
+          /* Опрос порта управления */
+          time_read = millis();
+          mode_value = pulseIn(PWM_MODE_PIN, HIGH);
+          value_diff = abs (mode_value -prev_mode_value);
+          //SERIAL.println(mode_value);
+          
+          if(value_diff>deviance){
+            if((time_read-swith_time)>2000){
+              //SERIAL.println("qqq");
+                swith_time = time_read;////////////Время когда поменялось значение
+                isReversed = !isReversed;///////////////Отключил пока смену значения. Порт без подключенного приемника сильно щумит
+                EEPROM.write(isReversed_EEPROM_CELL, isReversed);
+                for (int k=0;k<(isReversed==true?2:3);k++){ //////////////////Мигаем для подтверждения
+                  analogWrite(rear_white_pin, 125);
+                  vTaskDelay(10);
+                  analogWrite(rear_white_pin, 0);
+                  vTaskDelay(10);
+                }
+            }
           }
-        }
-        /* Опрос порта управления конец*/
+          /* Опрос порта управления конец*/
+       }
 
          /* Опрос порта газа*/
         tormoz = 0;
